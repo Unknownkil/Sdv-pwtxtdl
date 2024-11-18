@@ -2,6 +2,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import subprocess
 import time
+import os
 
 # Bot Token aur Owner ID define karein
 API_TOKEN = '8156991393:AAErGESkJko3F_uMk-i4BJ1CtScdg7ENYOU'
@@ -109,21 +110,31 @@ def ask_quality(chat_id, links):
     bot.send_message(chat_id, "Select video quality:", reply_markup=markup)
     bot.register_next_step_handler(chat_id, lambda msg: download_files(chat_id, links, msg.text))
 
-# Downloading files with yt-dlp, error handling, and delay
+# Downloading files with yt-dlp, error handling, delay, file sending, and deletion
 def download_files(chat_id, links, quality=None):
     for url in links:
         file_name = url.split("/")[-1].split(".")[0]
         if "pdf" in url:
             # PDF Download (implement PDF download logic here)
             bot.send_message(chat_id, f"Downloading PDF: {file_name}.pdf")
+            # Placeholder for PDF download command
+            # Send and delete PDF
+            pdf_path = f"{file_name}.pdf"
+            bot.send_document(chat_id, open(pdf_path, 'rb'))
+            os.remove(pdf_path)
             continue  # Skip to the next link
 
         # Video download logic with error handling
         download_url = f"https://muftukmall.kashurtek.site/{url.split('/')[-2]}/hls/{quality}/main.m3u8"
-        command = f'yt-dlp "{download_url}" -o "{file_name}.mp4"'
+        video_path = f"{file_name}.mp4"
+        command = f'yt-dlp "{download_url}" -o "{video_path}"'
         try:
             bot.send_message(chat_id, f"Downloading video: {file_name}.mp4")
             subprocess.run(command, shell=True, check=True)
+            # Send the video file to the user
+            bot.send_document(chat_id, open(video_path, 'rb'))
+            # Delete the file after sending
+            os.remove(video_path)
         except subprocess.CalledProcessError as e:
             bot.send_message(chat_id, f"Error downloading {file_name}. Moving to the next file.")
         time.sleep(10)  # Delay of 10 seconds before downloading the next file
