@@ -4,7 +4,7 @@ import subprocess
 import time
 
 # Bot Token aur Owner ID define karein
-API_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+API_TOKEN = '8156991393:AAErGESkJko3F_uMk-i4BJ1CtScdg7ENYOU'
 OWNER_ID = 5443679321
 
 # Bot Initialize karte hain
