@@ -3,14 +3,20 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import subprocess
 import time
 import os
+import requests
 
-# Bot Token aur Owner ID define karein
+# Bot Token and Owner ID define karein
 API_TOKEN = '8156991393:AAErGESkJko3F_uMk-i4BJ1CtScdg7ENYOU'
 OWNER_ID = 5443679321
 
 # Bot Initialize karte hain
 bot = telebot.TeleBot(API_TOKEN)
 authorized_users = {OWNER_ID: float('inf')}  # Owner ID by default authorized hoga
+
+# PDF aur Video links ko global define karen
+pdf_links = []
+video_links = []
+selected_quality = None  # Quality selection store karne ke liye
 
 # Helper function to check authorization
 def is_authorized(user_id):
@@ -69,24 +75,29 @@ def txt_to_vid(call):
 
 # Process TXT file upload
 def process_txt_file(message):
+    global pdf_links, video_links
+
     if not message.document:
         bot.reply_to(message, "Please upload a TXT file.")
         return
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
-    urls, pdf_links, video_links = [], [], []
+    # Reset the lists
+    pdf_links = []
+    video_links = []
+
     for line in downloaded_file.decode().splitlines():
-        urls.append(line.strip())
+        line = line.strip()
         if "pdf" in line:
             pdf_links.append(line)
         else:
             video_links.append(line)
 
-    send_dl_options(message.chat.id, pdf_links, video_links)
+    send_dl_options(message.chat.id)
 
 # Function to send download options
-def send_dl_options(chat_id, pdf_links, video_links):
+def send_dl_options(chat_id):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(f"DL Only PDF ({len(pdf_links)})", callback_data="dl_only_pdf"),
                InlineKeyboardButton(f"DL Only Video ({len(video_links)})", callback_data="dl_only_video"),
@@ -96,48 +107,71 @@ def send_dl_options(chat_id, pdf_links, video_links):
 # Download handlers
 @bot.callback_query_handler(func=lambda call: call.data.startswith("dl_"))
 def handle_download(call):
+    global pdf_links, video_links, selected_quality
+    
     if call.data == "dl_only_pdf":
         download_files(call.message.chat.id, pdf_links)
     elif call.data == "dl_only_video":
+        selected_quality = None  # Reset quality selection
         ask_quality(call.message.chat.id, video_links)
     elif call.data == "dl_both":
+        selected_quality = None
         ask_quality(call.message.chat.id, video_links + pdf_links)
 
 def ask_quality(chat_id, links):
+    global video_links
+    video_links = links  # Set the links to download after quality selection
     markup = InlineKeyboardMarkup()
     for quality in ["240", "360", "480", "720"]:
         markup.add(InlineKeyboardButton(quality, callback_data=f"quality_{quality}"))
     bot.send_message(chat_id, "Select video quality:", reply_markup=markup)
-    bot.register_next_step_handler(chat_id, lambda msg: download_files(chat_id, links, msg.text))
 
-# Downloading files with yt-dlp, error handling, delay, file sending, and deletion
+@bot.callback_query_handler(func=lambda call: call.data.startswith("quality_"))
+def quality_selected(call):
+    global selected_quality
+    selected_quality = call.data.split("_")[1]
+    bot.delete_message(call.message.chat.id, call.message.message_id)  # Delete quality message after selection
+    bot.send_message(call.message.chat.id, f"Starting downloads with quality: {selected_quality}")
+    download_files(call.message.chat.id, video_links, selected_quality)
+
+# Downloading files with ffmpeg first, fallback to yt-dlp if ffmpeg fails
 def download_files(chat_id, links, quality=None):
     for url in links:
         file_name = url.split("/")[-1].split(".")[0]
         if "pdf" in url:
-            # PDF Download (implement PDF download logic here)
-            bot.send_message(chat_id, f"Downloading PDF: {file_name}.pdf")
-            # Placeholder for PDF download command
-            # Send and delete PDF
+            # PDF Download without modification
             pdf_path = f"{file_name}.pdf"
+            bot.send_message(chat_id, f"Downloading PDF: {file_name}.pdf")
+            pdf_content = requests.get(url).content
+            with open(pdf_path, "wb") as pdf_file:
+                pdf_file.write(pdf_content)
             bot.send_document(chat_id, open(pdf_path, 'rb'))
             os.remove(pdf_path)
             continue  # Skip to the next link
 
-        # Video download logic with error handling
+        # Video download logic with fallback
         download_url = f"https://muftukmall.kashurtek.site/{url.split('/')[-2]}/hls/{quality}/main.m3u8"
         video_path = f"{file_name}.mp4"
-        command = f'yt-dlp "{download_url}" -o "{video_path}"'
+
+        # Try downloading with ffmpeg
+        ffmpeg_command = f'ffmpeg -i "{download_url}" -c copy "{video_path}"'
         try:
-            bot.send_message(chat_id, f"Downloading video: {file_name}.mp4")
-            subprocess.run(command, shell=True, check=True)
-            # Send the video file to the user
+            bot.send_message(chat_id, f"Attempting download with ffmpeg: {file_name}.mp4")
+            subprocess.run(ffmpeg_command, shell=True, check=True)
             bot.send_document(chat_id, open(video_path, 'rb'))
-            # Delete the file after sending
             os.remove(video_path)
-        except subprocess.CalledProcessError as e:
-            bot.send_message(chat_id, f"Error downloading {file_name}. Moving to the next file.")
-        time.sleep(10)  # Delay of 10 seconds before downloading the next file
+        except subprocess.CalledProcessError:
+            # If ffmpeg fails, try with yt-dlp
+            yt_dlp_command = f'yt-dlp "{download_url}" -o "{video_path}"'
+            try:
+                bot.send_message(chat_id, f"ffmpeg failed, attempting with yt-dlp: {file_name}.mp4")
+                subprocess.run(yt_dlp_command, shell=True, check=True)
+                bot.send_document(chat_id, open(video_path, 'rb'))
+                os.remove(video_path)
+            except subprocess.CalledProcessError:
+                # If both fail, send error message
+                bot.send_message(chat_id, f"Error: Could not download {file_name} with either ffmpeg or yt-dlp.")
+        time.sleep(10)
 
 # Bot Polling
 bot.polling()
